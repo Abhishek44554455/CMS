@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/* Base styles for the AICTE Complaint Management System.
+   Tailwind v4: utility classes are available everywhere, no config file needed. */
+
+body {
+  background-color: #f8fafc;
+  color: #1e293b;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Thin, subtle scrollbars for tables and sidebar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
