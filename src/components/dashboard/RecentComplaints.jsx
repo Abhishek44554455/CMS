@@ -7,8 +7,7 @@ import ComplaintStatusBadge from '../complaints/ComplaintStatusBadge.jsx';
 import { formatDate, getRecentComplaints } from '../../data/mockData.js';
 
 /** Dashboard section: latest complaints across all institutions. */
-export default function RecentComplaints({ limit = 8 }) {
-  const complaints = getRecentComplaints(limit);
+export default function RecentComplaints({ limit = 8, complaints = getRecentComplaints(limit) }) {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -15,26 +15,24 @@ import {
   UserRound,
 } from 'lucide-react';
 
-import Button from '../components/common/Button.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import Modal from '../components/common/Modal.jsx';
 import ComplaintPriorityBadge from '../components/complaints/ComplaintPriorityBadge.jsx';
 import ComplaintStatusBadge from '../components/complaints/ComplaintStatusBadge.jsx';
 import ComplaintTimeline from '../components/complaints/ComplaintTimeline.jsx';
 
-// Mock data import — replace with api.complaints.getById(id) later.
-import { ADMIN_USER, OFFICERS, STATUSES, formatDate, getComplaintById } from '../data/mockData.js';
+import Button from '../components/common/Button.jsx';
+import Loading from '../components/common/Loading.jsx';
+
+import * as api from '../services/api.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { STATUSES, formatDate } from '../data/mockData.js';
 
 function todayIso() {
   const d = new Date();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
-}
-
-function withNewStep(timeline, step) {
-  const cleared = timeline.map((s) => ({ ...s, current: false }));
-  return [...cleared, { date: todayIso(), completed: true, ...step }];
 }
 
 function Section({ title, children }) {
@@ -59,14 +57,22 @@ function Field({ label, children }) {
 
 /**
  * Shared complaint detail page — opened from Complaints, Dashboard and Escalated.
- * Actions (assign / status / escalate / resolve / comments) update local state only
- * until the Express backend exists.
+ * Loads the complaint and its timeline from the API; every action calls the
+ * backend and refreshes complaint + history afterwards.
  */
 export default function ComplaintDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
-  const [complaint, setComplaint] = useState(() => getComplaintById(id));
+  const [complaint, setComplaint] = useState(null);
+  const [timeline, setTimeline] = useState([]);
+  const [officers, setOfficers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [actionError, setActionError] = useState('');
   const [modal, setModal] = useState(null); // 'assign' | 'status' | 'escalate' | 'resolve'
   const [assignOfficerId, setAssignOfficerId] = useState('');
   const [nextStatus, setNextStatus] = useState('');
@@ -74,11 +80,47 @@ export default function ComplaintDetails() {
   const [resolutionNote, setResolutionNote] = useState('');
   const [newComment, setNewComment] = useState('');
 
-  // Reset local state if the user navigates between complaints.
-  useEffect(() => {
-    setComplaint(getComplaintById(id));
-    setModal(null);
+  const loadComplaint = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const loaded = await api.getComplaintById(id);
+      const isFinal = loaded.status === 'Resolved' || loaded.status === 'Closed';
+      const steps = await api.getComplaintHistory(id, { isFinal });
+      setComplaint(loaded);
+      setTimeline(steps);
+    } catch (err) {
+      setComplaint(null);
+      setTimeline([]);
+      setLoadError(err);
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
+
+  // Reset transient state and reload when the user navigates between complaints.
+  useEffect(() => {
+    setModal(null);
+    setNotice('');
+    setActionError('');
+    loadComplaint();
+  }, [loadComplaint]);
+
+  // Officer list for the assign modal.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getOfficers({ limit: 100 })
+      .then((res) => {
+        if (!cancelled) setOfficers(res.officers);
+      })
+      .catch(() => {
+        if (!cancelled) setOfficers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleBack = () => {
     if (window.history.state && window.history.state.idx > 0) {
@@ -88,12 +130,25 @@ export default function ComplaintDetails() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <Loading label="Loading complaint..." />
+      </div>
+    );
+  }
+
   if (!complaint) {
+    const notFound = loadError?.status === 404;
     return (
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <EmptyState
-          title="Complaint not found"
-          message={`No complaint exists with the ID "${id}".`}
+          title={notFound ? 'Complaint not found' : 'Unable to load complaint'}
+          message={
+            notFound
+              ? `No complaint exists with the ID "${id}".`
+              : loadError?.message || 'The complaint could not be loaded.'
+          }
           action={
             <Link
               to="/admin/complaints"
@@ -108,7 +163,7 @@ export default function ComplaintDetails() {
     );
   }
 
-  const isResolved = complaint.status === 'Resolved';
+  const isResolved = complaint.status === 'Resolved' || complaint.status === 'Closed';
 
   const openAssign = () => {
     setAssignOfficerId(complaint.assignedOfficer ? complaint.assignedOfficer.id : '');
@@ -127,19 +182,28 @@ export default function ComplaintDetails() {
     setModal('resolve');
   };
 
+  const runAction = async (action, message) => {
+    setActionBusy(true);
+    setActionError('');
+    setNotice('');
+    try {
+      await action();
+      await loadComplaint();
+      setNotice(message);
+      setModal(null);
+    } catch (err) {
+      setActionError(err?.message || 'The action could not be completed.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const handleAssign = () => {
-    const officer = OFFICERS.find((o) => o.id === assignOfficerId);
-    if (!officer) return;
-    setComplaint((prev) => ({
-      ...prev,
-      assignedOfficer: officer,
-      timeline: withNewStep(prev.timeline, {
-        title: 'Officer Assigned',
-        description: `${officer.name} (${officer.bureau}) assigned for investigation.`,
-        current: true,
-      }),
-    }));
-    setModal(null);
+    if (!assignOfficerId) return;
+    runAction(
+      () => api.assignComplaint(complaint.uuid, { assignedOfficerId: assignOfficerId }),
+      'Officer assigned successfully.'
+    );
   };
 
   const handleStatusChange = () => {
@@ -147,49 +211,30 @@ export default function ComplaintDetails() {
       setModal(null);
       return;
     }
-    setComplaint((prev) => ({
-      ...prev,
-      status: nextStatus,
-      timeline: withNewStep(prev.timeline, {
-        title: 'Status Updated',
-        description: `Status changed from ${prev.status} to ${nextStatus}.`,
-        current: true,
-      }),
-    }));
-    setModal(null);
+    runAction(
+      () =>
+        api.updateComplaintStatus(complaint.uuid, {
+          status: nextStatus,
+          comment: `Status changed from ${complaint.status} to ${nextStatus}.`,
+        }),
+      `Status changed to ${nextStatus}.`
+    );
   };
 
   const handleEscalate = () => {
     const reason = escalationReason.trim() || 'Escalated for senior intervention';
-    setComplaint((prev) => ({
-      ...prev,
-      status: 'Escalated',
-      escalationReason: reason,
-      timeline: withNewStep(prev.timeline, {
-        title: 'Escalated',
-        description: reason,
-        current: true,
-      }),
-    }));
-    setModal(null);
+    runAction(() => api.escalateComplaint(complaint.uuid, { reason }), 'Complaint escalated successfully.');
   };
 
   const handleResolve = () => {
-    setComplaint((prev) => ({
-      ...prev,
-      status: 'Resolved',
-      daysOverdue: 0,
-      slaBreached: false,
-      updatedAt: todayIso(),
-      timeline: [
-        ...withNewStep(prev.timeline, {
-          title: 'Resolved',
-          description: resolutionNote.trim() || 'Final resolution recorded and closed.',
-          current: false,
+    runAction(
+      () =>
+        api.updateComplaintStatus(complaint.uuid, {
+          status: 'Resolved',
+          comment: resolutionNote.trim() || 'Final resolution recorded and closed.',
         }),
-      ],
-    }));
-    setModal(null);
+      'Complaint marked as resolved.'
+    );
   };
 
   const handleAddComment = () => {
@@ -201,8 +246,8 @@ export default function ComplaintDetails() {
         ...prev.comments,
         {
           id: `${prev.id}-c${prev.comments.length + 1}`,
-          author: ADMIN_USER.name,
-          role: ADMIN_USER.role,
+          author: user?.name || 'You',
+          role: user?.role || '',
           text,
           date: todayIso(),
         },
@@ -248,17 +293,17 @@ export default function ComplaintDetails() {
 
           {/* Actions */}
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" icon={<UserPlus className="h-4 w-4" />} onClick={openAssign}>
+            <Button variant="secondary" icon={<UserPlus className="h-4 w-4" />} onClick={openAssign} disabled={actionBusy}>
               Assign Officer
             </Button>
-            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={openStatus}>
+            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={openStatus} disabled={actionBusy}>
               Change Status
             </Button>
             <Button
               variant="warning"
               icon={<TriangleAlert className="h-4 w-4" />}
               onClick={openEscalate}
-              disabled={isResolved}
+              disabled={isResolved || actionBusy}
             >
               Escalate
             </Button>
@@ -266,13 +311,48 @@ export default function ComplaintDetails() {
               variant="primary"
               icon={<CheckCircle2 className="h-4 w-4" />}
               onClick={openResolve}
-              disabled={isResolved}
+              disabled={isResolved || actionBusy}
             >
               Resolve
             </Button>
           </div>
         </div>
       </div>
+
+      {/* Action feedback */}
+      {notice ? (
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+        >
+          <span>{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice('')}
+            className="text-green-700 hover:text-green-900"
+            aria-label="Dismiss message"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError('')}
+            className="text-red-700 hover:text-red-900"
+            aria-label="Dismiss error"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
         {/* Left column */}
@@ -340,7 +420,7 @@ export default function ComplaintDetails() {
           </Section>
 
           <Section title="Complaint Timeline">
-            <ComplaintTimeline timeline={complaint.timeline} />
+            <ComplaintTimeline timeline={timeline} />
           </Section>
         </div>
 
@@ -441,7 +521,9 @@ export default function ComplaintDetails() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setModal(null)}>Cancel</Button>
-            <Button onClick={handleAssign} disabled={!assignOfficerId}>Assign Officer</Button>
+            <Button onClick={handleAssign} disabled={!assignOfficerId || actionBusy}>
+              {actionBusy ? 'Assigning…' : 'Assign Officer'}
+            </Button>
           </>
         }
       >
@@ -455,11 +537,15 @@ export default function ComplaintDetails() {
           className={`${selectClass} mt-2`}
         >
           <option value="">Choose an officer…</option>
-          {OFFICERS.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name} — {o.bureau} ({o.pending} pending)
-            </option>
-          ))}
+          {officers.length === 0 ? (
+            <option value="">No officers available</option>
+          ) : (
+            officers.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name} — {o.bureau} ({o.pending} pending)
+              </option>
+            ))
+          )}
         </select>
         <p className="mt-3 text-xs text-slate-500">
           The officer will be responsible for investigating and resolving this complaint.
@@ -473,7 +559,9 @@ export default function ComplaintDetails() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setModal(null)}>Cancel</Button>
-            <Button onClick={handleStatusChange}>Update Status</Button>
+            <Button onClick={handleStatusChange} disabled={actionBusy}>
+              {actionBusy ? 'Updating…' : 'Update Status'}
+            </Button>
           </>
         }
       >
@@ -499,7 +587,9 @@ export default function ComplaintDetails() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setModal(null)}>Cancel</Button>
-            <Button variant="warning" onClick={handleEscalate}>Escalate</Button>
+            <Button variant="warning" onClick={handleEscalate} disabled={actionBusy}>
+              {actionBusy ? 'Escalating…' : 'Escalate'}
+            </Button>
           </>
         }
       >
@@ -526,8 +616,8 @@ export default function ComplaintDetails() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setModal(null)}>Cancel</Button>
-            <Button icon={<CheckCircle2 className="h-4 w-4" />} onClick={handleResolve}>
-              Mark as Resolved
+            <Button icon={<CheckCircle2 className="h-4 w-4" />} onClick={handleResolve} disabled={actionBusy}>
+              {actionBusy ? 'Saving…' : 'Mark as Resolved'}
             </Button>
           </>
         }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search, ShieldCheck, TriangleAlert } from 'lucide-react';
 
@@ -9,76 +9,40 @@ import ComplaintPriorityBadge from '../components/complaints/ComplaintPriorityBa
 import ComplaintStatusBadge from '../components/complaints/ComplaintStatusBadge.jsx';
 import ComplaintTimeline from '../components/complaints/ComplaintTimeline.jsx';
 
-// Mock data import — lookup uses the central dataset plus locally submitted complaints.
-import { formatDate, getComplaintById } from '../data/mockData.js';
+import * as api from '../services/api.js';
+import { formatDate } from '../data/mockData.js';
 
-const SUBMISSIONS_KEY = 'aicte_complaint_submissions';
+const EXAMPLE_IDS = ['CMP-10241', 'CMP-10245', 'CMP-10248'];
 
-const EXAMPLE_IDS = ['CMP-10245', 'CMP-10230', 'CMP-10215'];
+/**
+ * Looks the complaint up on the backend (by complaint number) and maps its
+ * history rows to timeline steps.
+ */
+async function resolveComplaint(value) {
+  const number = String(value).trim();
+  const complaint = await api.getComplaintById(number);
+  const isFinal = complaint.status === 'Resolved' || complaint.status === 'Closed';
+  const timeline = await api.getComplaintHistory(number, { isFinal });
 
-function fromMock(c) {
   return {
-    id: c.id,
-    title: c.title,
-    category: c.category,
-    priority: c.priority,
-    status: c.status,
-    institutionName: c.institution.name,
-    institutionCode: c.institutionCode,
-    state: c.institution.state,
-    district: c.institution.district,
-    createdAt: c.createdAt,
-    updatedAt: c.updatedAt,
-    slaDueDate: c.slaDueDate,
-    slaDays: c.slaDays,
-    slaBreached: c.slaBreached,
-    daysOverdue: c.daysOverdue,
-    timeline: c.timeline,
+    id: complaint.id,
+    title: complaint.title,
+    category: complaint.category,
+    priority: complaint.priority,
+    status: complaint.status,
+    institutionName: complaint.institution.name,
+    institutionCode: complaint.institutionCode,
+    state: complaint.institution.state,
+    district: complaint.institution.district,
+    assignedOfficer: complaint.assignedOfficer,
+    createdAt: complaint.createdAt,
+    updatedAt: complaint.updatedAt,
+    slaDueDate: complaint.slaDueDate,
+    slaDays: complaint.slaDays,
+    slaBreached: complaint.slaBreached,
+    daysOverdue: complaint.daysOverdue,
+    timeline,
   };
-}
-
-function fromLocal(r) {
-  return {
-    id: r.id,
-    title: r.title,
-    category: r.category,
-    priority: r.priority,
-    status: r.status,
-    institutionName: r.institutionName,
-    institutionCode: r.institutionCode,
-    state: r.state,
-    district: r.district,
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-    slaDueDate: r.slaDueDate,
-    slaDays: r.slaDays,
-    slaBreached: Boolean(r.slaBreached),
-    daysOverdue: r.daysOverdue || 0,
-    timeline: [
-      {
-        title: 'Complaint Submitted',
-        date: r.createdAt,
-        description: 'Complaint registered on the AICTE grievance portal.',
-        completed: true,
-        current: r.status !== 'Resolved',
-      },
-    ],
-  };
-}
-
-function resolveComplaint(value) {
-  const query = value.trim().toUpperCase();
-  const mock = getComplaintById(query);
-  if (mock) return fromMock(mock);
-
-  try {
-    const submissions = JSON.parse(window.localStorage.getItem(SUBMISSIONS_KEY) || '[]');
-    const found = submissions.find((r) => String(r.id).toUpperCase() === query);
-    if (found) return fromLocal(found);
-  } catch {
-    // Ignore storage errors.
-  }
-  return null;
 }
 
 function InfoField({ label, children }) {
@@ -99,20 +63,25 @@ export default function TrackComplaint() {
   const [result, setResult] = useState(null);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
-  const timerRef = useRef(null);
+  const [error, setError] = useState(null);
 
-  const runLookup = (value) => {
+  const runLookup = async (value) => {
     const trimmed = String(value || '').trim();
     if (!trimmed) return;
     setLoading(true);
     setResult(null);
+    setError(null);
     setSearched(false);
-    window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => {
-      setResult(resolveComplaint(trimmed));
+    try {
+      const found = await resolveComplaint(trimmed);
+      setResult(found);
+    } catch (err) {
+      setError(err || new Error('Lookup failed'));
+      setResult(null);
+    } finally {
       setSearched(true);
       setLoading(false);
-    }, 400);
+    }
   };
 
   // Auto-track when arriving with ?id=CMP-xxxxx
@@ -120,9 +89,6 @@ export default function TrackComplaint() {
     if (paramId) runLookup(paramId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramId]);
-
-  // Clear any pending lookup timer on unmount.
-  useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -199,8 +165,8 @@ export default function TrackComplaint() {
             <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
               <p className="text-sm font-medium text-slate-700">No complaint looked up yet</p>
               <p className="mt-1 text-sm text-slate-500">
-                Enter a complaint number above. Complaints submitted on this device are tracked
-                locally in this demo.
+                Enter a complaint number above to fetch its live status from the complaint
+                database.
               </p>
             </div>
           ) : null}
@@ -208,15 +174,36 @@ export default function TrackComplaint() {
           {!loading && searched && !result ? (
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
               <EmptyState
-                title="Complaint not found"
-                message={`No complaint matches “${query}”. Check the number and try again.`}
+                title={
+                  error?.status === 404
+                    ? 'Complaint not found'
+                    : error?.status === 400
+                      ? 'Invalid complaint number'
+                      : error?.status === 401 || error?.status === 403
+                        ? 'Sign in required'
+                        : 'Unable to look up complaint'
+                }
+                message={
+                  error?.status === 404
+                    ? `No complaint matches “${query}”. Check the number and try again.`
+                    : error?.message || `No complaint matches “${query}”.`
+                }
                 action={
-                  <Link
-                    to="/submit-complaint"
-                    className="inline-flex rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800"
-                  >
-                    Submit a new complaint
-                  </Link>
+                  error?.status === 401 || error?.status === 403 ? (
+                    <Link
+                      to="/login"
+                      className="inline-flex rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800"
+                    >
+                      Sign in
+                    </Link>
+                  ) : (
+                    <Link
+                      to="/submit-complaint"
+                      className="inline-flex rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800"
+                    >
+                      Submit a new complaint
+                    </Link>
+                  )
                 }
               />
             </div>
@@ -255,8 +242,23 @@ export default function TrackComplaint() {
                   <InfoField label="Category">{result.category}</InfoField>
                   <InfoField label="Priority"><ComplaintPriorityBadge priority={result.priority} /></InfoField>
                   <InfoField label="Status"><ComplaintStatusBadge status={result.status} /></InfoField>
+                  <InfoField label="Assigned Officer">
+                    {result.assignedOfficer ? (
+                      <span>
+                        {result.assignedOfficer.name}
+                        {result.assignedOfficer.bureau ? (
+                          <span className="text-slate-500"> · {result.assignedOfficer.bureau}</span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">Not assigned yet</span>
+                    )}
+                  </InfoField>
                   <InfoField label="Submitted Date">{formatDate(result.createdAt)}</InfoField>
                   <InfoField label="Last Updated">{formatDate(result.updatedAt)}</InfoField>
+                  <InfoField label="SLA Window">
+                    {result.slaDays ? `${result.slaDays} days` : '—'}
+                  </InfoField>
                   <InfoField label="SLA Due Date">
                     <span className={result.slaBreached ? 'font-medium text-red-600' : ''}>
                       {formatDate(result.slaDueDate)}

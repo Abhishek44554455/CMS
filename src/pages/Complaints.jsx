@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 
 import ComplaintFilters from '../components/complaints/ComplaintFilters.jsx';
 import ComplaintTable from '../components/complaints/ComplaintTable.jsx';
+import Button from '../components/common/Button.jsx';
+import EmptyState from '../components/common/EmptyState.jsx';
+import Loading from '../components/common/Loading.jsx';
 
-// Mock data import — replace with api.complaints.list(params) later.
-import { COMPLAINTS } from '../data/mockData.js';
+import * as api from '../services/api.js';
 
 const PAGE_SIZE = 10;
 
@@ -17,38 +19,83 @@ const INITIAL_FILTERS = {
   institution: '',
 };
 
+/**
+ * Complaints list — data comes from GET /api/complaints (server-side
+ * search, filters and pagination). The table, filters and pagination
+ * keep their original design.
+ */
 export default function Complaints() {
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [page, setPage] = useState(1);
+  const [institutions, setInstitutions] = useState([]);
+
+  const [complaints, setComplaints] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   const handleFiltersChange = (next) => {
     setFilters(next);
     setPage(1);
   };
 
-  const filtered = useMemo(() => {
-    const query = filters.search.trim().toLowerCase();
-    return COMPLAINTS.filter((c) => {
-      if (filters.status && c.status !== filters.status) return false;
-      if (filters.priority && c.priority !== filters.priority) return false;
-      if (filters.category && c.category !== filters.category) return false;
-      if (filters.institution && c.institution.id !== filters.institution) return false;
-      if (query) {
-        const haystack = `${c.id} ${c.title} ${c.institution.name} ${c.category}`.toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-      return true;
-    });
-  }, [filters]);
+  // Institution options for the filter dropdown (public endpoint).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getInstitutions({ limit: 100 })
+      .then((res) => {
+        if (!cancelled) setInstitutions(res.institutions);
+      })
+      .catch(() => {
+        // Filter falls back to the built-in list; the table still loads.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+
+    api
+      .getComplaints({
+        search: filters.search.trim() || undefined,
+        status: filters.status || undefined,
+        priority: filters.priority || undefined,
+        category: filters.category || undefined,
+        institution_id: filters.institution || undefined,
+        page,
+        limit: PAGE_SIZE,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setComplaints(res.complaints);
+        setTotal(res.pagination.total);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setComplaints([]);
+        setTotal(0);
+        setError(err?.message || 'Unable to load complaints.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filters, page, reloadKey]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const pageItems = filtered.slice(startIndex, startIndex + PAGE_SIZE);
-
-  const rangeFrom = filtered.length === 0 ? 0 : startIndex + 1;
-  const rangeTo = Math.min(startIndex + PAGE_SIZE, filtered.length);
-
+  const rangeFrom = total === 0 ? 0 : startIndex + 1;
+  const rangeTo = Math.min(startIndex + PAGE_SIZE, total);
   const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
 
   return (
@@ -57,22 +104,59 @@ export default function Complaints() {
         <div>
           <h2 className="text-xl font-semibold text-slate-900">Complaints</h2>
           <p className="text-sm text-slate-500">
-            {filtered.length.toLocaleString('en-IN')} complaint{filtered.length === 1 ? '' : 's'} found
+            {loading ? 'Loading complaints…' : (
+              <>
+                {total.toLocaleString('en-IN')} complaint{total === 1 ? '' : 's'} found
+              </>
+            )}
           </p>
         </div>
+        <Button
+          variant="secondary"
+          icon={<RefreshCw className="h-4 w-4" />}
+          onClick={() => setReloadKey((k) => k + 1)}
+        >
+          Refresh
+        </Button>
       </div>
 
-      <ComplaintFilters filters={filters} onChange={handleFiltersChange} />
+      <ComplaintFilters
+        filters={filters}
+        onChange={handleFiltersChange}
+        institutions={institutions.length > 0 ? institutions : undefined}
+      />
 
-      <ComplaintTable complaints={pageItems} />
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <Loading label="Loading complaints..." />
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <EmptyState
+            title="Unable to load complaints."
+            message={error}
+            action={
+              <Button
+                variant="secondary"
+                icon={<RefreshCw className="h-4 w-4" />}
+                onClick={() => setReloadKey((k) => k + 1)}
+              >
+                Try again
+              </Button>
+            }
+          />
+        </div>
+      ) : (
+        <ComplaintTable complaints={complaints} />
+      )}
 
       {/* Pagination */}
-      {filtered.length > 0 ? (
+      {!loading && !error && total > 0 ? (
         <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
           <p className="text-sm text-slate-500">
             Showing <span className="font-medium text-slate-700">{rangeFrom}</span>–
             <span className="font-medium text-slate-700">{rangeTo}</span> of{' '}
-            <span className="font-medium text-slate-700">{filtered.length}</span> complaints
+            <span className="font-medium text-slate-700">{total}</span> complaints
           </p>
 
           <nav className="flex items-center gap-1" aria-label="Complaints pagination">

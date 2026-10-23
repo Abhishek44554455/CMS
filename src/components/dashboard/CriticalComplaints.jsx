@@ -10,8 +10,7 @@ import { getCriticalComplaints, formatDate } from '../../data/mockData.js';
  * Dashboard section: complaints with an SLA breach or Critical priority.
  * Rows link to the shared ComplaintDetails page.
  */
-export default function CriticalComplaints() {
-  const complaints = getCriticalComplaints(6);
+export default function CriticalComplaints({ complaints = getCriticalComplaints(6) }) {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm">

@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import AdminLayout from './components/layout/AdminLayout.jsx';
+import ProtectedRoute from './components/ProtectedRoute.jsx';
+import { AuthProvider } from './context/AuthContext.jsx';
 
 // Admin pages
 import Analytics from './pages/Analytics.jsx';
@@ -39,15 +41,23 @@ import './App.css';
  */
 export default function App() {
   return (
-    <Routes>
+    <AuthProvider>
+      <Routes>
       {/* Public website */}
       <Route path="/" element={<LandingPage />} />
       <Route path="/submit-complaint" element={<ComplaintSubmission />} />
       <Route path="/track" element={<TrackComplaint />} />
       <Route path="/login" element={<Login />} />
 
-      {/* Admin application */}
-      <Route path="/admin" element={<AdminLayout />}>
+      {/* Admin application — protected: signed-in staff only */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<Dashboard />} />
         <Route path="complaints" element={<Complaints />} />
         <Route path="complaints/:id" element={<ComplaintDetails />} />
@@ -61,6 +71,7 @@ export default function App() {
 
       {/* Unknown routes → home */}
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </AuthProvider>
   );
 }

@@ -9,7 +9,7 @@ const SELECT_CLASS =
  * Search + filter row for the Complaints page.
  * Controlled: `filters` + `onChange(nextFilters)` — no data fetching here.
  */
-export default function ComplaintFilters({ filters, onChange }) {
+export default function ComplaintFilters({ filters, onChange, institutions = INSTITUTIONS }) {
   const setField = (field, value) => onChange({ ...filters, [field]: value });
 
   return (
@@ -70,7 +70,7 @@ export default function ComplaintFilters({ filters, onChange }) {
           className={SELECT_CLASS}
         >
           <option value="">All Institutions</option>
-          {INSTITUTIONS.map((i) => (
+          {institutions.map((i) => (
             <option key={i.id} value={i.id}>{i.name}</option>
           ))}
         </select>

@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
-import { Eye, Mail, Search, UserRound } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Eye, Mail, RefreshCw, Search, UserRound } from 'lucide-react';
 
+import Button from '../components/common/Button.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
+import Loading from '../components/common/Loading.jsx';
 import Modal from '../components/common/Modal.jsx';
 
-// Mock data import — replace with api.officers.list() later.
-import { OFFICERS } from '../data/mockData.js';
+import * as api from '../services/api.js';
 
 function StatusPill({ status }) {
   return (
@@ -22,19 +23,47 @@ function StatusPill({ status }) {
 }
 
 export default function Officers() {
+  const [officersList, setOfficersList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [search, setSearch] = useState('');
   const [bureau, setBureau] = useState('');
   const [status, setStatus] = useState('');
   const [selected, setSelected] = useState(null);
 
+  // Load officers from GET /api/officers.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadError('');
+    api
+      .getOfficers({ limit: 100 })
+      .then((res) => {
+        if (!cancelled) setOfficersList(res.officers);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setOfficersList([]);
+          setLoadError(err?.message || 'Unable to load officers.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
+
   const bureaus = useMemo(
-    () => Array.from(new Set(OFFICERS.map((o) => o.bureau))).sort(),
-    []
+    () => Array.from(new Set(officersList.map((o) => o.bureau))).sort(),
+    [officersList]
   );
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return OFFICERS.filter((o) => {
+    return officersList.filter((o) => {
       if (bureau && o.bureau !== bureau) return false;
       if (status && o.status !== status) return false;
       if (query) {
@@ -43,7 +72,7 @@ export default function Officers() {
       }
       return true;
     });
-  }, [search, bureau, status]);
+  }, [officersList, search, bureau, status]);
 
   const totals = useMemo(
     () =>
@@ -64,8 +93,14 @@ export default function Officers() {
       <div>
         <h2 className="text-xl font-semibold text-slate-900">Officers</h2>
         <p className="text-sm text-slate-500">
-          {filtered.length} officer{filtered.length === 1 ? '' : 's'} · {totals.assigned} assignments ·{' '}
-          {totals.breaches} SLA breaches
+          {loading ? (
+            'Loading officers…'
+          ) : (
+            <>
+              {filtered.length} officer{filtered.length === 1 ? '' : 's'} · {totals.assigned}{' '}
+              assignments · {totals.breaches} SLA breaches
+            </>
+          )}
         </p>
       </div>
 
@@ -108,7 +143,27 @@ export default function Officers() {
       </div>
 
       {/* Table */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <Loading label="Loading officers..." />
+        </div>
+      ) : loadError ? (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <EmptyState
+            title="Unable to load officers."
+            message={loadError}
+            action={
+              <Button
+                variant="secondary"
+                icon={<RefreshCw className="h-4 w-4" />}
+                onClick={() => setReloadKey((k) => k + 1)}
+              >
+                Try again
+              </Button>
+            }
+          />
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <EmptyState title="No officers found" message="Try adjusting the search or filters." />
         </div>
@@ -120,6 +175,7 @@ export default function Officers() {
                 <th className="px-5 py-3 font-medium">Officer Name</th>
                 <th className="px-5 py-3 font-medium">Email</th>
                 <th className="px-5 py-3 font-medium">Bureau</th>
+                <th className="px-5 py-3 font-medium">Role</th>
                 <th className="px-5 py-3 font-medium">Assigned</th>
                 <th className="px-5 py-3 font-medium">Pending</th>
                 <th className="px-5 py-3 font-medium">Resolved</th>
@@ -141,6 +197,7 @@ export default function Officers() {
                   </td>
                   <td className="whitespace-nowrap px-5 py-3 text-slate-600">{o.email}</td>
                   <td className="whitespace-nowrap px-5 py-3 text-slate-600">{o.bureau}</td>
+                  <td className="whitespace-nowrap px-5 py-3 text-slate-600">{o.role}</td>
                   <td className="px-5 py-3 text-slate-700">{o.assigned}</td>
                   <td className="px-5 py-3 text-amber-600">{o.pending}</td>
                   <td className="px-5 py-3 text-green-600">{o.resolved}</td>
@@ -221,8 +278,16 @@ export default function Officers() {
 
             <dl className="grid grid-cols-2 gap-4">
               <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-400">Role</dt>
+                <dd className="mt-0.5 text-sm text-slate-800">{selected.role}</dd>
+              </div>
+              <div>
                 <dt className="text-xs uppercase tracking-wide text-slate-400">Bureau</dt>
                 <dd className="mt-0.5 text-sm text-slate-800">{selected.bureau}</dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-400">Institution</dt>
+                <dd className="mt-0.5 text-sm text-slate-800">{selected.institution}</dd>
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-wide text-slate-400">Resolution Rate</dt>

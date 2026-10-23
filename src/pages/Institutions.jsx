@@ -1,12 +1,12 @@
-import { useMemo, useState } from 'react';
-import { Building2, Pencil, Plus, Search, Eye } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Building2, Pencil, Plus, Search, Eye, RefreshCw } from 'lucide-react';
 
 import Button from '../components/common/Button.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
+import Loading from '../components/common/Loading.jsx';
 import Modal from '../components/common/Modal.jsx';
 
-// Mock data import — replace with api.institutions.list() later.
-import { INSTITUTIONS, STATUSES } from '../data/mockData.js';
+import * as api from '../services/api.js';
 
 const TYPE_OPTIONS = [
   'Engineering College',
@@ -36,7 +36,10 @@ function StatusPill({ status }) {
 }
 
 export default function Institutions() {
-  const [institutions, setInstitutions] = useState(INSTITUTIONS);
+  const [institutions, setInstitutions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [search, setSearch] = useState('');
   const [type, setType] = useState('');
   const [status, setStatus] = useState('');
@@ -45,6 +48,31 @@ export default function Institutions() {
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // Load institutions from GET /api/institutions.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadError('');
+    api
+      .getInstitutions({ limit: 100 })
+      .then((res) => {
+        if (!cancelled) setInstitutions(res.institutions);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setInstitutions([]);
+          setLoadError(err?.message || 'Unable to load institutions.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -90,33 +118,34 @@ export default function Institutions() {
     setModal('edit');
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim() || !form.code.trim()) {
       setFormError('Institution name and code are required.');
       return;
     }
-    if (modal === 'add') {
-      const next = {
-        id: `inst-${Date.now()}`,
-        shortName: form.name.split(' ')[0],
-        ...form,
+    setSaving(true);
+    setFormError('');
+    try {
+      const payload = {
         name: form.name.trim(),
         code: form.code.trim(),
-        totalComplaints: 0,
-        pending: 0,
-        resolved: 0,
+        state: form.state.trim(),
+        district: form.district.trim(),
+        type: form.type,
+        status: form.status,
       };
-      setInstitutions((prev) => [next, ...prev]);
-    } else if (modal === 'edit' && selected) {
-      setInstitutions((prev) =>
-        prev.map((inst) =>
-          inst.id === selected.id
-            ? { ...inst, ...form, name: form.name.trim(), code: form.code.trim() }
-            : inst
-        )
-      );
+      if (modal === 'add') {
+        await api.createInstitution(payload);
+      } else if (modal === 'edit' && selected) {
+        await api.updateInstitution(selected.id, payload);
+      }
+      closeModals();
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setFormError(err?.message || 'Unable to save the institution.');
+    } finally {
+      setSaving(false);
     }
-    closeModals();
   };
 
   const setField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
@@ -174,7 +203,27 @@ export default function Institutions() {
       </div>
 
       {/* Table */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <Loading label="Loading institutions..." />
+        </div>
+      ) : loadError ? (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <EmptyState
+            title="Unable to load institutions."
+            message={loadError}
+            action={
+              <Button
+                variant="secondary"
+                icon={<RefreshCw className="h-4 w-4" />}
+                onClick={() => setReloadKey((k) => k + 1)}
+              >
+                Try again
+              </Button>
+            }
+          />
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <EmptyState
             title="No institutions found"
@@ -301,8 +350,12 @@ export default function Institutions() {
         footer={
           <>
             <Button variant="secondary" onClick={closeModals}>Cancel</Button>
-            <Button onClick={handleSave}>
-              {modal === 'add' ? 'Add Institution' : 'Save Changes'}
+            <Button onClick={handleSave} disabled={saving}>
+              {saving
+                ? 'Saving…'
+                : modal === 'add'
+                  ? 'Add Institution'
+                  : 'Save Changes'}
             </Button>
           </>
         }
@@ -377,7 +430,7 @@ export default function Institutions() {
 
         {formError ? <p className="mt-3 text-sm text-red-600">{formError}</p> : null}
         <p className="mt-3 text-xs text-slate-400">
-          Changes are stored in local state only until the backend is connected.
+          Changes are saved to the complaint database and reflected across the portal.
         </p>
       </Modal>
     </div>

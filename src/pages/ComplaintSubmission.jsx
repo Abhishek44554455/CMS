@@ -4,13 +4,13 @@ import { ArrowRight, CheckCircle2, Paperclip, Search, Send, ShieldCheck, X } fro
 
 import Button from '../components/common/Button.jsx';
 
-// Mock data import — institution options come from the central dataset.
-import { CATEGORIES, INSTITUTIONS, PRIORITIES } from '../data/mockData.js';
+import * as api from '../services/api.js';
+
+// Reference labels (categories, priorities) — institution options are loaded
+// from GET /api/institutions.
+import { CATEGORIES, PRIORITIES } from '../data/mockData.js';
 
 const DRAFT_KEY = 'aicte_complaint_draft';
-const SUBMISSIONS_KEY = 'aicte_complaint_submissions';
-
-const SLA_DAYS_BY_PRIORITY = { Critical: 3, High: 5, Medium: 10, Low: 15 };
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600';
@@ -29,17 +29,6 @@ const EMPTY_FORM = {
   priority: 'Medium',
 };
 
-function todayIso() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function addDaysIso(iso, days) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const date = new Date(y, m - 1, d + days);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 function Field({ label, required = false, error = '', hint = '', children }) {
   return (
     <div>
@@ -55,8 +44,8 @@ function Field({ label, required = false, error = '', hint = '', children }) {
 }
 
 /**
- * Public complaint submission form. Frontend validation only; submissions and
- * drafts are stored in localStorage until the Express backend is connected.
+ * Public complaint submission form. Client-side validation, then the complaint
+ * is created through POST /api/complaints (drafts stay in localStorage).
  */
 export default function ComplaintSubmission() {
   const navigate = useNavigate();
@@ -65,6 +54,11 @@ export default function ComplaintSubmission() {
   const [errors, setErrors] = useState({});
   const [draftRestored, setDraftRestored] = useState(false);
   const [submittedId, setSubmittedId] = useState(null);
+  const [institutions, setInstitutions] = useState([]);
+  const [institutionsError, setInstitutionsError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [submitAuthRequired, setSubmitAuthRequired] = useState(false);
 
   // Restore a saved draft (if any) on first load.
   useEffect(() => {
@@ -88,8 +82,29 @@ export default function ComplaintSubmission() {
     setErrors((prev) => ({ ...prev, [field]: '' }));
   };
 
+  // Institution options come from GET /api/institutions.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getInstitutions({ limit: 100 })
+      .then((res) => {
+        if (!cancelled) {
+          setInstitutions(res.institutions);
+          setInstitutionsError('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setInstitutionsError(err?.message || 'Unable to load institutions.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleInstitutionChange = (institutionId) => {
-    const institution = INSTITUTIONS.find((i) => i.id === institutionId);
+    const institution = institutions.find((i) => i.id === institutionId);
     setForm((prev) => ({
       ...prev,
       institutionId,
@@ -146,54 +161,53 @@ export default function ComplaintSubmission() {
     }
   };
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
+    setSubmitError('');
+    setSubmitAuthRequired(false);
     if (!validate()) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    const institution = INSTITUTIONS.find((i) => i.id === form.institutionId);
-    const createdAt = todayIso();
-    const slaDays = SLA_DAYS_BY_PRIORITY[form.priority];
-    const id = `CMP-${String(Date.now()).slice(-5)}`;
-
-    const record = {
-      id,
-      title: form.title.trim(),
-      category: form.category,
-      priority: form.priority,
-      status: 'Pending',
-      institutionId: form.institutionId,
-      institutionName: institution ? institution.name : form.institutionId,
-      institutionCode: form.institutionCode,
-      state: form.state,
-      district: form.district,
-      complainant: {
-        name: form.name.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim(),
-      },
-      description: form.description.trim(),
-      createdAt,
-      updatedAt: createdAt,
-      slaDueDate: addDaysIso(createdAt, slaDays),
-      slaDays,
-      daysOverdue: 0,
-      slaBreached: false,
-      attachments: attachments.map((a) => a.name),
-    };
-
+    setSubmitting(true);
     try {
-      const existing = JSON.parse(window.localStorage.getItem(SUBMISSIONS_KEY) || '[]');
-      window.localStorage.setItem(SUBMISSIONS_KEY, JSON.stringify([record, ...existing]));
-      window.localStorage.removeItem(DRAFT_KEY);
-    } catch {
-      // Storage unavailable — the success screen still shows the ID.
-    }
+      const complaint = await api.createComplaint({
+        title: form.title.trim(),
+        description: form.description.trim(),
+        category: form.category,
+        priority: form.priority,
+        institution_id: form.institutionId,
+        complainant: {
+          name: form.name.trim(),
+          email: form.email.trim(),
+          phone: form.phone.trim(),
+        },
+      });
 
-    setSubmittedId(id);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+      try {
+        window.localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        // Storage unavailable — ignore.
+      }
+
+      setSubmittedId(complaint?.id || 'CMP-00000');
+      setForm(EMPTY_FORM);
+      setAttachments([]);
+      setErrors({});
+      setDraftRestored(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      if (err?.status === 401) {
+        setSubmitAuthRequired(true);
+        setSubmitError('Sign in is required before submitting a complaint.');
+      } else {
+        setSubmitError(err?.message || 'Unable to submit the complaint. Please try again.');
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   /* Success screen */
@@ -291,6 +305,29 @@ export default function ComplaintSubmission() {
           </div>
         ) : null}
 
+        {institutionsError ? (
+          <div
+            role="alert"
+            className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+          >
+            {institutionsError} Institution options may be incomplete.
+          </div>
+        ) : null}
+
+        {submitError ? (
+          <div
+            role="alert"
+            className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          >
+            <span>{submitError}</span>
+            {submitAuthRequired ? (
+              <Link to="/login" className="font-medium text-blue-700 hover:underline">
+                Sign in
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
+
         <form onSubmit={handleSubmit} noValidate className="space-y-5">
           {/* Complainant Information */}
           <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -341,7 +378,7 @@ export default function ComplaintSubmission() {
                     className={INPUT_CLASS}
                   >
                     <option value="">Select an institution…</option>
-                    {INSTITUTIONS.map((i) => (
+                    {institutions.map((i) => (
                       <option key={i.id} value={i.id}>{i.name}</option>
                     ))}
                   </select>
@@ -359,7 +396,7 @@ export default function ComplaintSubmission() {
                 <input
                   readOnly
                   value={
-                    (INSTITUTIONS.find((i) => i.id === form.institutionId) || {}).type || '—'
+                    (institutions.find((i) => i.id === form.institutionId) || {}).type || '—'
                   }
                   className={`${INPUT_CLASS} bg-slate-50 text-slate-500`}
                 />
@@ -453,7 +490,7 @@ export default function ComplaintSubmission() {
             <div className="border-b border-slate-200 px-5 py-4">
               <h2 className="text-sm font-semibold text-slate-900">Attachments</h2>
               <p className="text-xs text-slate-500">
-                Optional — files are listed locally and uploaded only after the backend is connected.
+                Optional — files are listed on this device; uploading attachments is not enabled yet.
               </p>
             </div>
             <div className="px-5 py-5">
@@ -503,8 +540,8 @@ export default function ComplaintSubmission() {
             <Button variant="secondary" onClick={handleSaveDraft} type="button">
               Save Draft
             </Button>
-            <Button type="submit" icon={<Send className="h-4 w-4" />}>
-              Submit Complaint
+            <Button type="submit" icon={<Send className="h-4 w-4" />} disabled={submitting}>
+              {submitting ? 'Submitting…' : 'Submit Complaint'}
             </Button>
           </div>
 
