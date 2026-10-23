@@ -54,7 +54,9 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(async (payload) => {
     const nextUser = await api.register(payload);
-    setUser(nextUser);
+    // Supabase may require email confirmation first — then there is no token
+    // yet and the account is not considered signed in.
+    if (api.getToken()) setUser(nextUser);
     return nextUser;
   }, []);
 

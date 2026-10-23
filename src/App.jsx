@@ -19,6 +19,7 @@ import Settings from './pages/Settings.jsx';
 import ComplaintSubmission from './pages/ComplaintSubmission.jsx';
 import LandingPage from './pages/LandingPage.jsx';
 import Login from './pages/Login.jsx';
+import Signup from './pages/Signup.jsx';
 import TrackComplaint from './pages/TrackComplaint.jsx';
 
 import './App.css';
@@ -29,6 +30,7 @@ import './App.css';
  *   /submit-complaint      ComplaintSubmission
  *   /track                 TrackComplaint
  *   /login                 Login
+ *   /signup                Signup (creates admin/officer/citizen accounts)
  *   /admin                 Dashboard        (AdminLayout shell)
  *   /admin/complaints      Complaints
  *   /admin/complaints/:id  ComplaintDetails
@@ -48,6 +50,7 @@ export default function App() {
       <Route path="/submit-complaint" element={<ComplaintSubmission />} />
       <Route path="/track" element={<TrackComplaint />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
 
       {/* Admin application — protected: signed-in staff only */}
       <Route

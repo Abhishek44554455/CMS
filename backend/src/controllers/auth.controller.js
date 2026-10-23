@@ -6,7 +6,6 @@ import {
 } from '../middleware/error.middleware.js';
 
 const ALLOWED_ROLES = ['CITIZEN', 'OFFICER', 'BUREAU_HEAD', 'ADMIN'];
-const PUBLIC_ROLES = ['CITIZEN', 'OFFICER'];
 
 /**
  * passwords are handled by Supabase Auth (bcrypt on the Supabase side).
@@ -41,11 +40,9 @@ export async function register(req, res) {
       `role must be one of: ${ALLOWED_ROLES.join(', ')}`
     );
   }
-  if (!PUBLIC_ROLES.includes(finalRole)) {
-    throw badRequest(
-      `${finalRole} accounts are created by an administrator, not by self-registration`
-    );
-  }
+  // NOTE: self-registration is open to every role so the demo admin console
+  // can be set up without SQL. In production, restrict ADMIN / BUREAU_HEAD
+  // creation to invitations or an existing admin (e.g. an /admin/users API).
 
   const client = db();
 
@@ -73,7 +70,16 @@ export async function register(req, res) {
     .select('id, name, email, role, institution_id, bureau_id, created_at')
     .single();
 
-  if (insertError) throw handleSupabaseError(insertError);
+  if (insertError) {
+    // Roll back the auth account created above so the same email can be
+    // registered again once the failure is fixed (no orphaned users).
+    try {
+      await client.auth.admin.deleteUser(authData.user.id);
+    } catch {
+      // Best effort — the original error is reported below.
+    }
+    throw handleSupabaseError(insertError);
+  }
 
   res.status(201).json({
     success: true,

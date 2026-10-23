@@ -12,17 +12,31 @@ import { notFound, errorHandler } from './middleware/error.middleware.js';
 
 const app = express();
 
-// CORS — restricted to the React dev server origin (no wildcard).
+// CORS — restricted to configured origins (no wildcard).
+// In development, any localhost/127.0.0.1 port is accepted so the Vite dev
+// server works whichever port it picks (5173, 5174, …).
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 
+function isLocalDevOrigin(origin) {
+  if (process.env.NODE_ENV === 'production') return false;
+  try {
+    const host = new URL(origin).hostname;
+    return host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 app.use(
   cors({
     origin(origin, callback) {
       // allow same-origin / curl requests (no Origin header)
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      if (!origin || allowedOrigins.includes(origin) || isLocalDevOrigin(origin)) {
+        return callback(null, true);
+      }
       return callback(null, false);
     },
     credentials: true,

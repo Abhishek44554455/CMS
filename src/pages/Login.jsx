@@ -130,6 +130,12 @@ export default function Login() {
           ) : null}
 
           <div className="mt-5 flex flex-col items-center gap-3 border-t border-slate-200 pt-5 text-sm">
+            <p className="text-slate-500">
+              No account yet?{' '}
+              <Link to="/signup" className="font-medium text-blue-700 hover:underline">
+                Create one
+              </Link>
+            </p>
             <Link to="/submit-complaint" className="font-medium text-blue-700 hover:underline">
               Submit a complaint
             </Link>
