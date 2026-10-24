@@ -20,9 +20,9 @@ const EXAMPLE_IDS = ['CMP-10241', 'CMP-10245', 'CMP-10248'];
  */
 async function resolveComplaint(value) {
   const number = String(value).trim();
-  const complaint = await api.getComplaintById(number);
-  const isFinal = complaint.status === 'Resolved' || complaint.status === 'Closed';
-  const timeline = await api.getComplaintHistory(number, { isFinal });
+  // Public endpoint — works signed in or signed out, returns complaint + timeline.
+  const { complaint, timeline } = await api.trackComplaint(number);
+  if (!complaint) throw new Error('Complaint not found');
 
   return {
     id: complaint.id,

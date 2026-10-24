@@ -153,7 +153,7 @@ export default function Header({ onMenuClick = () => {} }) {
             </button>
 
             {notificationsOpen ? (
-              <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+              <div className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
                 <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                   <p className="text-sm font-semibold text-slate-900">Notifications</p>
                   <span className="flex items-center gap-2">
@@ -242,7 +242,7 @@ export default function Header({ onMenuClick = () => {} }) {
             </button>
 
             {profileOpen ? (
-              <div className="absolute right-0 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+              <div className="absolute right-0 z-40 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
                 <div className="border-b border-slate-200 px-4 py-3">
                   <p className="text-sm font-semibold text-slate-900">{displayName}</p>
                   <p className="truncate text-xs text-slate-500">{user?.email || ''}</p>

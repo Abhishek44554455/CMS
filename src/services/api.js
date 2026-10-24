@@ -439,6 +439,22 @@ export async function getComplaintHistory(id, options = {}) {
   return mapHistory(response?.data?.history, options);
 }
 
+/**
+ * Public tracking lookup (no session required). Hits the sanitized
+ * GET /complaints/track/:trackingId endpoint and returns the mapped
+ * complaint plus its timeline in one call.
+ */
+export async function trackComplaint(trackingId) {
+  const response = await request(`/complaints/track/${encodeURIComponent(trackingId)}`);
+  const data = response?.data || {};
+  const complaint = mapComplaint(data.complaint);
+  const isFinal = complaint?.status === 'Resolved' || complaint?.status === 'Closed';
+  return {
+    complaint,
+    timeline: mapHistory(data.history, { isFinal }),
+  };
+}
+
 export async function createComplaint(payload) {
   const body = {
     title: payload.title,
@@ -656,6 +672,7 @@ export default {
   getComplaints,
   getComplaintById,
   getComplaintHistory,
+  trackComplaint,
   createComplaint,
   updateComplaint,
   assignComplaint,

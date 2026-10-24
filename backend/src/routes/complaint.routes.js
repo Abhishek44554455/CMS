@@ -6,6 +6,11 @@ import { asyncHandler } from '../middleware/error.middleware.js';
 
 const router = Router();
 
+// PUBLIC citizen tracking — registered before `authenticate` on purpose:
+// anyone holding a complaint number can check progress; the response is
+// sanitized (no complainant PII) in the service layer.
+router.get('/track/:trackingId', asyncHandler(complaintController.trackComplaint));
+
 router.use(authenticate);
 
 // CRUD

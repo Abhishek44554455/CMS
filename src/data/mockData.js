@@ -47,8 +47,18 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 
 export function formatDate(iso) {
   if (!iso) return '—';
-  const [y, m, d] = iso.split('-').map(Number);
-  return `${String(d).padStart(2, '0')} ${MONTH_NAMES[m - 1]} ${y}`;
+  const str = String(iso);
+  // Date-only values (YYYY-MM-DD): use the calendar parts directly so the
+  // day never shifts with the viewer's timezone.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const [y, m, d] = str.split('-').map(Number);
+    return `${String(d).padStart(2, '0')} ${MONTH_NAMES[m - 1]} ${y}`;
+  }
+  // Full timestamps (2026-10-23T09:01:45+00:00): parse and format in UTC
+  // so the stored calendar day renders consistently for every viewer.
+  const parsed = new Date(str);
+  if (Number.isNaN(parsed.getTime())) return '—';
+  return `${String(parsed.getUTCDate()).padStart(2, '0')} ${MONTH_NAMES[parsed.getUTCMonth()]} ${parsed.getUTCFullYear()}`;
 }
 
 /* ------------------------------------------------------------------ */

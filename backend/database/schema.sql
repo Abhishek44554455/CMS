@@ -1,21 +1,4 @@
--- =====================================================================
---  AICTE COMPLAINT MANAGEMENT SYSTEM (CMS)
---  Database schema for Supabase PostgreSQL
--- ---------------------------------------------------------------------
---  Run this file FIRST in the Supabase SQL Editor.
---  Then run seed.sql (backend/database/seed.sql) for demo data.
---
---  Notes:
---   * No credentials live in this file — no Supabase URL, keys,
---     passwords or JWT secrets. Connection settings stay in the
---     Supabase dashboard / environment variables.
---   * complaint_attachments.file_url will later point at objects in
---     Supabase Storage (bucket for complaint files). Storage bucket
---     creation and upload code are intentionally NOT part of this file.
--- =====================================================================
 
--- gen_random_uuid() is built into PostgreSQL 13+; the extension is kept
--- as a harmless fallback for older local databases.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 

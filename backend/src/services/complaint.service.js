@@ -48,7 +48,7 @@ export function isComplaintNumber(value) {
 }
 
 const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{4}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function assertValidUuidOrNumber(value, label = 'complaint id') {
   const v = String(value || '').trim();
@@ -130,17 +130,27 @@ async function generateComplaintNumber(client) {
   return `CMP-${String(next).padStart(5, '0')}`;
 }
 
-async function getExisting(id) {
-  assertValidUuid(id, 'complaint id');
-  const client = db();
-  const { data, error } = await client
-    .from('complaints')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle();
+/**
+ * Resolves a :id route parameter that may be either the UUID id or the
+ * human-readable complaint number (CMP-10245) used across the UI.
+ * Returns the matching row, or null when nothing matches.
+ */
+async function findComplaint(client, id, select = '*') {
+  assertValidUuidOrNumber(id, 'complaint id');
+  let query = client.from('complaints').select(select);
+  query = isComplaintNumber(id)
+    ? query.eq('complaint_number', id.trim().toUpperCase())
+    : query.eq('id', id);
+  const { data, error } = await query.maybeSingle();
   if (error) throw handleSupabaseError(error);
-  if (!data) throw notFoundError('Complaint not found');
-  return { client, complaint: data };
+  return data;
+}
+
+async function getExisting(id) {
+  const client = db();
+  const complaint = await findComplaint(client, id);
+  if (!complaint) throw notFoundError('Complaint not found');
+  return { client, complaint };
 }
 
 /* ------------------------------------------------------------------ */
@@ -251,17 +261,11 @@ export async function getComplaints(query = {}) {
 
 /** GET :id — accepts a UUID or a complaint number. */
 export async function getComplaintById(id, user) {
-  assertValidUuidOrNumber(id, 'complaint id');
   const client = db();
-  let query = client.from('complaints').select(COMPLAINT_SELECT);
-  query = isComplaintNumber(id)
-    ? query.ilike('complaint_number', id.trim().toUpperCase())
-    : query.eq('id', id);
-  const { data, error } = await query.maybeSingle();
-  if (error) throw handleSupabaseError(error);
-  if (!data) throw notFoundError('Complaint not found');
-  if (user) assertOwnership(user, data);
-  return data;
+  const complaint = await findComplaint(client, id, COMPLAINT_SELECT);
+  if (!complaint) throw notFoundError('Complaint not found');
+  if (user) assertOwnership(user, complaint);
+  return complaint;
 }
 
 /** PUT :id — editable fields only. */
@@ -304,7 +308,7 @@ export async function updateComplaint(id, payload, user) {
   const { data, error } = await client
     .from('complaints')
     .update(allowed)
-    .eq('id', id)
+    .eq('id', complaint.id)
     .select(COMPLAINT_SELECT)
     .single();
   if (error) throw handleSupabaseError(error);
@@ -313,8 +317,8 @@ export async function updateComplaint(id, payload, user) {
 
 /** DELETE :id (admin) — history/notifications cascade in the database. */
 export async function deleteComplaint(id) {
-  const { client } = await getExisting(id);
-  const { error } = await client.from('complaints').delete().eq('id', id);
+  const { client, complaint } = await getExisting(id);
+  const { error } = await client.from('complaints').delete().eq('id', complaint.id);
   if (error) throw handleSupabaseError(error);
   return true;
 }
@@ -361,13 +365,13 @@ export async function assignComplaint(id, payload, actor) {
   const { data, error } = await client
     .from('complaints')
     .update(updates)
-    .eq('id', id)
+    .eq('id', complaint.id)
     .select(COMPLAINT_SELECT)
     .single();
   if (error) throw handleSupabaseError(error);
 
   await addHistory(client, {
-    complaint_id: id,
+    complaint_id: complaint.id,
     action: 'ASSIGNED',
     performed_by: actor.id,
     old_status: complaint.status,
@@ -383,7 +387,7 @@ export async function assignComplaint(id, payload, actor) {
       title: 'Complaint assigned',
       message: `${complaint.complaint_number} has been assigned to you.`,
       type: 'COMPLAINT_ASSIGNED',
-      complaint_id: id,
+      complaint_id: complaint.id,
     });
   }
 
@@ -413,7 +417,7 @@ export async function updateComplaintStatus(id, payload, actor) {
   const { data, error } = await client
     .from('complaints')
     .update(updates)
-    .eq('id', id)
+    .eq('id', complaint.id)
     .select(COMPLAINT_SELECT)
     .single();
   if (error) throw handleSupabaseError(error);
@@ -422,7 +426,7 @@ export async function updateComplaintStatus(id, payload, actor) {
     status === 'RESOLVED' ? 'RESOLVED' : status === 'CLOSED' ? 'CLOSED' : 'STATUS_CHANGED';
 
   await addHistory(client, {
-    complaint_id: id,
+    complaint_id: complaint.id,
     action,
     performed_by: actor.id,
     old_status: complaint.status,
@@ -435,7 +439,7 @@ export async function updateComplaintStatus(id, payload, actor) {
     title: status === 'RESOLVED' ? 'Complaint resolved' : 'Status changed',
     message: `${complaint.complaint_number} is now ${status}.`,
     type: status === 'RESOLVED' ? 'RESOLUTION' : 'STATUS_CHANGED',
-    complaint_id: id,
+    complaint_id: complaint.id,
   });
 
   return data;
@@ -456,7 +460,7 @@ export async function escalateComplaint(id, payload, actor) {
     .from('escalations')
     .insert([
       {
-        complaint_id: id,
+        complaint_id: complaint.id,
         escalated_by: actor.id,
         escalated_to: escalated_to || null,
         reason: String(reason).trim(),
@@ -471,13 +475,13 @@ export async function escalateComplaint(id, payload, actor) {
   const { data, error } = await client
     .from('complaints')
     .update({ status: 'ESCALATED' })
-    .eq('id', id)
+    .eq('id', complaint.id)
     .select(COMPLAINT_SELECT)
     .single();
   if (error) throw handleSupabaseError(error);
 
   await addHistory(client, {
-    complaint_id: id,
+    complaint_id: complaint.id,
     action: 'ESCALATED',
     performed_by: actor.id,
     old_status: complaint.status,
@@ -490,7 +494,7 @@ export async function escalateComplaint(id, payload, actor) {
     title: 'Escalation',
     message: `${complaint.complaint_number} was escalated: ${String(reason).trim()}`,
     type: 'ESCALATION',
-    complaint_id: id,
+    complaint_id: complaint.id,
   });
 
   return { ...data, escalation_id: escalation.id };
@@ -498,24 +502,46 @@ export async function escalateComplaint(id, payload, actor) {
 
 /** GET :id/history — timeline entries, oldest first. */
 export async function getComplaintHistory(id, user) {
-  assertValidUuidOrNumber(id, 'complaint id');
   const client = db();
-
-  let complaintQuery = client.from('complaints').select('id, user_id, status');
-  complaintQuery = isComplaintNumber(id)
-    ? complaintQuery.ilike('complaint_number', id.trim().toUpperCase())
-    : complaintQuery.eq('id', id);
-  const { data: complaint, error: cError } = await complaintQuery.maybeSingle();
-  if (cError) throw handleSupabaseError(cError);
+  const complaint = await findComplaint(client, id, 'id, user_id, status');
   if (!complaint) throw notFoundError('Complaint not found');
   if (user) assertOwnership(user, complaint);
 
   const { data, error } = await client
     .from('complaint_history')
     .select('*, performer:performed_by (name, role)')
-    .eq('complaint_id', id)
+    .eq('complaint_id', complaint.id)
     .order('created_at', { ascending: true });
   if (error) throw handleSupabaseError(error);
 
   return data || [];
+}
+
+/**
+ * GET /api/complaints/track/:trackingId — PUBLIC citizen tracking lookup.
+ * Deliberately excludes user_id, complainant PII and officer emails: anyone
+ * holding a complaint number can see progress, but no personal data leaks.
+ * Returns the mapped-ready complaint row plus its timeline in one response.
+ */
+export async function trackComplaint(trackingId) {
+  const client = db();
+  const complaint = await findComplaint(
+    client,
+    trackingId,
+    `id, complaint_number, institution_id, assigned_officer_id, title, description,
+     category, priority, status, sla_days, sla_due_at,
+     created_at, updated_at, resolved_at,
+     institutions:institution_id (name, institution_code, state, district, type),
+     assigned_officer:assigned_officer_id (name)`
+  );
+  if (!complaint) throw notFoundError('Complaint not found');
+
+  const { data: history, error } = await client
+    .from('complaint_history')
+    .select('action, old_status, new_status, comment, created_at, performer:performed_by (name)')
+    .eq('complaint_id', complaint.id)
+    .order('created_at', { ascending: true });
+  if (error) throw handleSupabaseError(error);
+
+  return { complaint, history: history || [] };
 }

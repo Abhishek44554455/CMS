@@ -108,3 +108,16 @@ export async function getComplaintHistory(req, res) {
     data: { history },
   });
 }
+
+/**
+ * GET /api/complaints/track/:trackingId (PUBLIC — no session required)
+ * Sanitized complaint + timeline for the citizen tracking page.
+ */
+export async function trackComplaint(req, res) {
+  const result = await complaintService.trackComplaint(req.params.trackingId);
+  res.status(200).json({
+    success: true,
+    message: 'Complaint fetched successfully',
+    data: result,
+  });
+}

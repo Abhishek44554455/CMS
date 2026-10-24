@@ -76,7 +76,7 @@ export async function getComplaintTrends({ days = 14, recentLimit = 10 } = {}) {
     client
       .from('complaints')
       .select(
-        'id, complaint_number, title, status, priority, category, created_at, ' +
+        'id, complaint_number, title, status, priority, category, sla_due_at, created_at, ' +
           'institutions:institution_id (name), complainant:user_id (name)'
       )
       .order('created_at', { ascending: false })
